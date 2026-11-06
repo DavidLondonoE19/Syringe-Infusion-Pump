@@ -58,6 +58,7 @@ static void calcular_pasos(float volumen_total, float tiempo_total) {
     while(stepper_finalizado == false){
         
     }
+}
 
 // Servo
 #define SERVO_PORT GPIO_NUM_27
@@ -87,7 +88,7 @@ static void posicionar_servo(int grados){
 }
 
 static void enviar_dato_nextion(uint32_t contador) {
-    char_mensaje[24];
+    char mensaje[24];
     const uint8_t fin_mensaje[] = {0xFF, 0xFF, 0xFF};
     int longitud = snprintf(mensaje, sizeof(mensaje), "n0.val=%lu", (unsigned long)contador);
     uart_write_bytes(UART_NEXTION, mensaje, longitud);
