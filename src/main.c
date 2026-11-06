@@ -7,6 +7,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <math.h>
+
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/ledc.h"
@@ -18,6 +20,11 @@
 
 // Variables globales
 #define PASOS_POR_REV 200
+static const char *TAG_ADC = "ADC_SHARP";
+static const char *TAG_ENCODER = "ENCODER";
+static const char *TAG_STEPPER = "STEPPER";
+static const char *TAG_SERVO = "SERVO";
+static const char *TAG_NEXTION = "NEXTION";
 
 // UART y Nextion
 #define UART_PORT UART_NUM_0
@@ -52,13 +59,6 @@ static void stepper_estado(int estado) {
     ESP_ERROR_CHECK(gpio_set_level(STEPPER_PORT_4, stepper_sequence[estado][3]));
 }
 
-static bool stepper_finalizado = false;
-
-static void calcular_pasos(float volumen_total, float tiempo_total) {
-    while(stepper_finalizado == false){
-        
-    }
-
 // Servo
 #define SERVO_PORT GPIO_NUM_27
 #define SERVO_PWM_FREQ 50U
@@ -87,11 +87,28 @@ static void posicionar_servo(int grados){
 }
 
 static void enviar_dato_nextion(uint32_t contador) {
-    char_mensaje[24];
+    char mensaje[24];
     const uint8_t fin_mensaje[] = {0xFF, 0xFF, 0xFF};
     int longitud = snprintf(mensaje, sizeof(mensaje), "n0.val=%lu", (unsigned long)contador);
     uart_write_bytes(UART_NEXTION, mensaje, longitud);
     uart_write_bytes(UART_NEXTION, fin_mensaje, sizeof(fin_mensaje));
+}
+
+static float leer_distancia(adc_oneshot_unit_handle_t adc1) {
+    float voltaje_distancia = 0;
+    float distancia_sharp = 0;
+    esp_err_t adc_lectura = adc_oneshot_read(adc1, SHARP_ADC_CHANNEL, &voltaje_distancia);
+
+    if (adc_lectura == ESP_OK){
+        ESP_LOGI(*TAG_ADC, "Lectura Sharp (V): %.3f", voltaje_distancia);
+    }
+
+    else{
+        ESP_LOGW(*TAG_ADC, "Error de lectura de sharp");
+    }
+
+    distancia_sharp = 11.587f * powf(voltaje_distancia, -1.0977f);
+    return distancia_sharp;
 }
 
 void app_main() {
@@ -180,4 +197,12 @@ void app_main() {
     ESP_ERROR_CHECK(uart_driver_install(UART_NEXTION, 256, 0, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NEXTION, &uart_nextion_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NEXTION, NEXTION_TX, NEXTION_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+
+    // main 
+
+    for(;;){
+        // Lectura sensor de distancia
+        float distancia_sharp = leer_distancia(adc1);
+
+    }
 }
