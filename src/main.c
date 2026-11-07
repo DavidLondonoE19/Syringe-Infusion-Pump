@@ -6,6 +6,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_intr_alloc.h"
 
 #include <math.h>
 
@@ -14,12 +15,21 @@
 #include "driver/ledc.h"
 
 #include "esp_adc/adc_oneshot.h"
-
+#include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_log.h"
 
 // Variables globales
 #define PASOS_POR_REV 200
+#define timer_Hz 1000000 // cada tick = 1us
+
+TickType_t ultimo_pulso_encoder_us = 0; 
+TickType_t nuevo_pulso_encoder_us = 0;
+TickType_t periodo_entre_pulsos = 0;
+static volatile bool evento_encoder = false;
+int contador_pulsos_encoder = 0;
+
+
 static const char *TAG_ADC = "ADC_SHARP";
 static const char *TAG_ENCODER = "ENCODER";
 static const char *TAG_STEPPER = "STEPPER";
@@ -70,6 +80,11 @@ static void stepper_estado(int estado) {
     // Encoder (GPIO)
 #define ENCODER_PORT GPIO_NUM_14
 
+static void IRAM_ATTR encoder_isr_handler(void *argument){
+    (void) argument;
+    evento_encoder = true;
+}
+
 static void posicionar_servo(int grados){
     uint32_t pwm_up_us = 0;
     uint32_t pwm_up_bits = 0;
@@ -95,21 +110,25 @@ static void enviar_dato_nextion(uint32_t contador) {
 }
 
 static float leer_distancia(adc_oneshot_unit_handle_t adc1) {
+    int raw = 0; 
     float voltaje_distancia = 0;
     float distancia_sharp = 0;
-    esp_err_t adc_lectura = adc_oneshot_read(adc1, SHARP_ADC_CHANNEL, &voltaje_distancia);
+    esp_err_t adc_lectura = adc_oneshot_read(adc1, SHARP_ADC_CHANNEL, &raw);
 
     if (adc_lectura == ESP_OK){
+        voltaje_distancia = (raw*3.3f/4095.0f);
         ESP_LOGI(*TAG_ADC, "Lectura Sharp (V): %.3f", voltaje_distancia);
+        distancia_sharp = 11.587f * powf(voltaje_distancia, -1.0977f);
+        return distancia_sharp;
     }
 
     else{
         ESP_LOGW(*TAG_ADC, "Error de lectura de sharp");
+        return -1.0f; // Return an error value
     }
-
-    distancia_sharp = 11.587f * powf(voltaje_distancia, -1.0977f);
-    return distancia_sharp;
 }
+
+
 
 void app_main() {
 
@@ -143,6 +162,8 @@ void app_main() {
         .unit_id = ADC_UNIT_1
     };
 
+    posicionar_servo(-90); // Posicion inicial del servo
+
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&adc_sharp, &adc1));
 
     adc_oneshot_chan_cfg_t adc_sharp_config = {
@@ -173,7 +194,7 @@ void app_main() {
                         (1ULL << STEPPER_PORT_4),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
     };
 
     ESP_ERROR_CHECK(gpio_config(&stepper_config));
@@ -184,7 +205,6 @@ void app_main() {
     GPIO_SET_LEVEL(STEPPER_PORT_4, 0);
 
     // Configuracion UART NEXTION
-
     uart_config_t uart_nextion_config = {
         .baud_rate = 9600,
         .data_bits = UART_DATA_8_BITS,
@@ -198,11 +218,30 @@ void app_main() {
     ESP_ERROR_CHECK(uart_param_config(UART_NEXTION, &uart_nextion_config));
     ESP_ERROR_CHECK(uart_set_pin(UART_NEXTION, NEXTION_TX, NEXTION_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
 
+    // Configuracion ISR Encoder
+    gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+    ESP_ERROR_CHECK(gpio_isr_handler_add(ENCODER_PORT,encoder_isr_handler, NULL));
+
     // main 
 
+
     for(;;){
+
         // Lectura sensor de distancia
         float distancia_sharp = leer_distancia(adc1);
 
+        //
+        if (evento_encoder == true){
+            ultimo_pulso_encoder_us = nuevo_pulso_encoder_us;
+            nuevo_pulso_encoder_us = xTaskGetTickCount();
+            periodo_entre_pulsos = nuevo_pulso_encoder_us - ultimo_pulso_encoder_us;
+            ESP_LOGI(*TAG_ENCODER, "Pulso encoder detectado. Tiempo entre pulsos: %lu us", periodo_entre_pulsos);
+            contador_pulsos_encoder++;
+            float frecuencia_de_pulsos = 1000000.0 / periodo_entre_pulsos; // Frecuencia en Hz
+            float vel_angular_rpm = (frecuencia_de_pulsos-11.0f)/0.14434f; // Ecuacion de frecuencia a RPM
+            ESP_LOGI(*TAG_ENCODER, "Velocidad angular: %.2f RPM", vel_angular_rpm);
+            evento_encoder = false;
+
+        }
     }
 }
