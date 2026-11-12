@@ -69,6 +69,13 @@ static void stepper_estado(int estado) {
     ESP_ERROR_CHECK(gpio_set_level(STEPPER_PORT_4, stepper_sequence[estado][3]));
 }
 
+static bool stepper_finalizado = false;
+
+static void calcular_pasos(float volumen_total, float tiempo_total) {
+    while(stepper_finalizado == false){
+        
+    }
+
 // Servo
 #define SERVO_PORT GPIO_NUM_27
 #define SERVO_PWM_FREQ 50U
